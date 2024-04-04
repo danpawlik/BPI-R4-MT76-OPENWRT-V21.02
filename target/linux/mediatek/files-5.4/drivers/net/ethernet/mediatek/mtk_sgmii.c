@@ -73,15 +73,6 @@ static int mtk_sgmii_xfi_pll_enable(struct mtk_sgmii *ss)
 	return 0;
 }
 
-int mtk_sgmii_link_status(struct mtk_sgmii_pcs *mpcs)
-{
-	unsigned int val;
-
-	regmap_read(mpcs->regmap, SGMSYS_PCS_CONTROL_1, &val);
-
-	return FIELD_GET(SGMII_LINK_STATYS, val);
-}
-
 void mtk_sgmii_reset(struct mtk_eth *eth, int id)
 {
 	u32 val = 0;
@@ -153,17 +144,13 @@ void mtk_sgmii_reset(struct mtk_eth *eth, int id)
 	mdelay(1);
 }
 
-int mtk_sgmii_need_powerdown(struct mtk_sgmii_pcs *mpcs, unsigned int bmcr)
+int mtk_sgmii_need_powerdown(struct mtk_sgmii_pcs *mpcs)
 {
 	u32 val;
 
 	/* need to power down sgmii if link down */
 	regmap_read(mpcs->regmap, SGMSYS_PCS_CONTROL_1, &val);
 	if (!(val & SGMII_LINK_STATYS))
-		return true;
-
-	/* need to power down sgmii if autoneg change */
-	if ((val & SGMII_AN_ENABLE) != bmcr)
 		return true;
 
 	return false;
@@ -387,130 +374,11 @@ void mtk_sgmii_setup_phya_gen2(struct mtk_sgmii_pcs *mpcs)
 	udelay(400);
 }
 
-static int mtk_sgmii_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
-				phy_interface_t interface,
-				const unsigned long *advertising,
-				bool permit_pause_to_mac)
-{
-	struct mtk_sgmii_pcs *mpcs = pcs_to_mtk_sgmii_pcs(pcs);
-	struct mtk_eth *eth = mpcs->eth;
-	unsigned int rgc3, sgm_mode = 0, bmcr = 0, speed = 0;
-	bool mode_changed = false, changed;
-	int advertise, link_timer;
-
-	advertise = phylink_mii_c22_pcs_encode_advertisement(interface,
-							     advertising);
-	if (advertise < 0)
-		return advertise;
-
-	spin_lock(&mpcs->regmap_lock);
-
-	/* Clearing IF_MODE_BIT0 switches the PCS to BASE-X mode, and
-	 * we assume that fixes it's speed at bitrate = line rate (in
-	 * other words, 1000Mbps or 2500Mbps).
-	 */
-	if (interface == PHY_INTERFACE_MODE_SGMII) {
-		bmcr = SGMII_AN_ENABLE;
-		sgm_mode = SGMII_IF_MODE_SGMII |
-			   SGMII_REMOTE_FAULT_DIS |
-			   SGMII_SPEED_DUPLEX_AN;
-	} else if (interface == PHY_INTERFACE_MODE_2500BASEX) {
-		/* HSGMII without autoneg */
-		speed = SGMII_SPEED_1000;
-		sgm_mode = SGMII_IF_MODE_SGMII;
-	} else {
-		/* 1000base-X with/without autoneg */
-		bmcr = linkmode_test_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
-					 advertising) ? SGMII_AN_ENABLE : 0;
-		if (bmcr)
-			sgm_mode = SGMII_SPEED_DUPLEX_AN;
-		else
-			speed = SGMII_SPEED_1000;
-	}
-
-	if (mpcs->interface != interface ||
-	    mtk_sgmii_need_powerdown(mpcs, bmcr)) {
-		link_timer = phylink_get_link_timer_ns(interface);
-		if (link_timer < 0) {
-			spin_unlock(&mpcs->regmap_lock);
-			return link_timer;
-		}
-
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V3)) {
-			mtk_sgmii_xfi_pll_enable(eth->sgmii);
-			mtk_sgmii_reset(eth, mpcs->id);
-		}
-
-		/* PHYA power down */
-		regmap_update_bits(mpcs->regmap, SGMSYS_QPHY_PWR_STATE_CTRL,
-				   SGMII_PHYA_PWD, SGMII_PHYA_PWD);
-
-		/* Reset SGMII PCS state */
-		regmap_update_bits(mpcs->regmap, SGMII_RESERVED_0,
-				   SGMII_SW_RESET, SGMII_SW_RESET);
-
-		/* Configure the interface polarity */
-		if (MTK_HAS_FLAGS(mpcs->flags, MTK_SGMII_PN_SWAP))
-			regmap_update_bits(mpcs->regmap, SGMSYS_QPHY_WRAP_CTRL,
-					   SGMII_PN_SWAP_MASK,
-					   SGMII_PN_SWAP_TX_RX);
-
-		if (interface == PHY_INTERFACE_MODE_2500BASEX)
-			rgc3 = RG_PHY_SPEED_3_125G;
-		else
-			rgc3 = 0;
-
-		/* Configure the underlying interface speed */
-		regmap_update_bits(mpcs->regmap, mpcs->ana_rgc3,
-				   RG_PHY_SPEED_3_125G, rgc3);
-
-		/* Setup the link timer */
-		regmap_write(mpcs->regmap, SGMSYS_PCS_LINK_TIMER,
-			     link_timer / 2 / 8);
-
-		mpcs->interface = interface;
-		linkmode_copy(mpcs->advertising, advertising);
-		mode_changed = true;
-	}
-
-	/* Update the advertisement, noting whether it has changed */
-	regmap_update_bits_check(mpcs->regmap, SGMSYS_PCS_ADVERTISE,
-				 SGMII_ADVERTISE, advertise, &changed);
-
-	/* Update the sgmsys mode register */
-	regmap_update_bits(mpcs->regmap, SGMSYS_SGMII_MODE,
-			   SGMII_REMOTE_FAULT_DIS | SGMII_DUPLEX_HALF |
-			   SGMII_SPEED_MASK | SGMII_SPEED_DUPLEX_AN |
-			   SGMII_IF_MODE_SGMII, sgm_mode | speed);
-
-	/* Update the BMCR */
-	regmap_update_bits(mpcs->regmap, SGMSYS_PCS_CONTROL_1,
-			   SGMII_AN_ENABLE, bmcr);
-
-	/* Release PHYA power down state */
-	usleep_range(50, 100);
-	regmap_write(mpcs->regmap, SGMSYS_QPHY_PWR_STATE_CTRL, 0);
-
-	if (mode_changed) {
-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V3)) {
-			if (interface == PHY_INTERFACE_MODE_2500BASEX)
-				mtk_sgmii_setup_phya_gen2(mpcs);
-			else
-				mtk_sgmii_setup_phya_gen1(mpcs);
-		}
-	}
-
-	spin_unlock(&mpcs->regmap_lock);
-
-	return changed || mode_changed;
-}
-
 static void mtk_sgmii_pcs_get_state(struct phylink_pcs *pcs,
 				    struct phylink_link_state *state)
 {
 	struct mtk_sgmii_pcs *mpcs = pcs_to_mtk_sgmii_pcs(pcs);
 	unsigned int bm, adv, rgc3, sgm_mode;
-	static unsigned long t_start;
 
 	state->interface = mpcs->interface;
 
@@ -545,15 +413,117 @@ static void mtk_sgmii_pcs_get_state(struct phylink_pcs *pcs,
 		else
 			state->duplex = DUPLEX_FULL;
 	}
+}
 
-	/* Reconfiguring SGMII every second to ensure that PCS can
-	 * link up with the Link Partner when a module is inserted.
+static int mtk_sgmii_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
+				phy_interface_t interface,
+				const unsigned long *advertising,
+				bool permit_pause_to_mac)
+{
+	struct mtk_sgmii_pcs *mpcs = pcs_to_mtk_sgmii_pcs(pcs);
+	struct mtk_eth *eth = mpcs->eth;
+	unsigned int rgc3, sgm_mode = 0, bmcr = 0, speed = 0;
+	bool mode_changed = false, changed;
+	int advertise, link_timer;
+
+	advertise = phylink_mii_c22_pcs_encode_advertisement(interface,
+							     advertising);
+	if (advertise < 0)
+		return advertise;
+
+	/* Clearing IF_MODE_BIT0 switches the PCS to BASE-X mode, and
+	 * we assume that fixes it's speed at bitrate = line rate (in
+	 * other words, 1000Mbps or 2500Mbps).
 	 */
-	if (state->link == 0 && time_after(jiffies, t_start + HZ)) {
-		t_start = jiffies;
-		mtk_sgmii_pcs_config(pcs, MLO_AN_INBAND,
-				     state->interface, mpcs->advertising, false);
+	if (interface == PHY_INTERFACE_MODE_SGMII) {
+		bmcr = SGMII_AN_ENABLE;
+		sgm_mode = SGMII_IF_MODE_SGMII |
+			   SGMII_REMOTE_FAULT_DIS |
+			   SGMII_SPEED_DUPLEX_AN;
+	} else if (interface == PHY_INTERFACE_MODE_2500BASEX) {
+		/* HSGMII without autoneg */
+		speed = SGMII_SPEED_1000;
+		sgm_mode = SGMII_IF_MODE_SGMII;
+	} else {
+		/* 1000base-X with/without autoneg */
+		bmcr = linkmode_test_bit(ETHTOOL_LINK_MODE_Autoneg_BIT,
+					 advertising) ? SGMII_AN_ENABLE : 0;
+		if (bmcr)
+			sgm_mode = SGMII_SPEED_DUPLEX_AN;
+		else
+			speed = SGMII_SPEED_1000;
 	}
+
+	if (mpcs->interface != interface ||
+	    mtk_sgmii_need_powerdown(mpcs)) {
+		link_timer = phylink_get_link_timer_ns(interface);
+		if (link_timer < 0)
+			return link_timer;
+
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V3)) {
+			mtk_sgmii_xfi_pll_enable(eth->sgmii);
+			mtk_sgmii_reset(eth, mpcs->id);
+		}
+
+		/* PHYA power down */
+		regmap_update_bits(mpcs->regmap, SGMSYS_QPHY_PWR_STATE_CTRL,
+				   SGMII_PHYA_PWD, SGMII_PHYA_PWD);
+
+		/* Reset SGMII PCS state */
+		regmap_update_bits(mpcs->regmap, SGMII_RESERVED_0,
+				   SGMII_SW_RESET, SGMII_SW_RESET);
+
+		/* Configure the interface polarity */
+		if (MTK_HAS_FLAGS(mpcs->flags, MTK_SGMII_PN_SWAP))
+			regmap_update_bits(mpcs->regmap, SGMSYS_QPHY_WRAP_CTRL,
+					   SGMII_PN_SWAP_MASK,
+					   SGMII_PN_SWAP_TX_RX);
+
+		if (interface == PHY_INTERFACE_MODE_2500BASEX)
+			rgc3 = RG_PHY_SPEED_3_125G;
+		else
+			rgc3 = 0;
+
+		/* Configure the underlying interface speed */
+		regmap_update_bits(mpcs->regmap, mpcs->ana_rgc3,
+				   RG_PHY_SPEED_3_125G, rgc3);
+
+		/* Setup the link timer */
+		regmap_write(mpcs->regmap, SGMSYS_PCS_LINK_TIMER,
+			     link_timer / 2 / 8);
+
+		mpcs->interface = interface;
+		mode_changed = true;
+	}
+
+	/* Update the advertisement, noting whether it has changed */
+	regmap_update_bits_check(mpcs->regmap, SGMSYS_PCS_ADVERTISE,
+				 SGMII_ADVERTISE, advertise, &changed);
+
+	/* Update the sgmsys mode register */
+	regmap_update_bits(mpcs->regmap, SGMSYS_SGMII_MODE,
+			   SGMII_REMOTE_FAULT_DIS | SGMII_DUPLEX_HALF |
+			   SGMII_SPEED_MASK | SGMII_SPEED_DUPLEX_AN |
+			   SGMII_IF_MODE_SGMII, sgm_mode | speed);
+
+	/* Update the BMCR */
+	regmap_update_bits(mpcs->regmap, SGMSYS_PCS_CONTROL_1,
+			   SGMII_AN_ENABLE, bmcr);
+
+	/* Release PHYA power down state */
+	usleep_range(50, 100);
+	regmap_write(mpcs->regmap, SGMSYS_QPHY_PWR_STATE_CTRL, 0);
+
+	if (mode_changed) {
+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_NETSYS_V3)) {
+			if (interface == PHY_INTERFACE_MODE_2500BASEX)
+				mtk_sgmii_setup_phya_gen2(mpcs);
+			else
+				mtk_sgmii_setup_phya_gen1(mpcs);
+		}
+	}
+
+	return changed || mode_changed;
 }
 
 void mtk_sgmii_pcs_restart_an(struct phylink_pcs *pcs)
@@ -575,22 +545,7 @@ static void mtk_sgmii_pcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 {
 	struct mtk_sgmii_pcs *mpcs = pcs_to_mtk_sgmii_pcs(pcs);
 	unsigned int sgm_mode, val;
-	unsigned long t_start = jiffies;
 
-	do {
-		msleep(1000);
-
-		if (mtk_sgmii_link_status(mpcs))
-			goto exit;
-
-		if (mode == MLO_AN_PHY)
-			mtk_sgmii_pcs_config(&mpcs->pcs, mode,
-					     interface, mpcs->advertising, false);
-	} while (time_before(jiffies, t_start + msecs_to_jiffies(3000)));
-
-	pr_warn("%s wait link up timeout!\n", __func__);
-
-exit:
 	/* If autoneg is enabled, the force speed and duplex
 	 * are not useful, so don't go any further.
 	 */
@@ -647,8 +602,6 @@ int mtk_sgmii_init(struct mtk_eth *eth, struct device_node *r, u32 ana_rgc3)
 		ss->pcs[i].pcs.ops = &mtk_sgmii_pcs_ops;
 		ss->pcs[i].pcs.poll = true;
 		ss->pcs[i].interface = PHY_INTERFACE_MODE_NA;
-
-		spin_lock_init(&ss->pcs[i].regmap_lock);
 
 		of_node_put(np);
 	}

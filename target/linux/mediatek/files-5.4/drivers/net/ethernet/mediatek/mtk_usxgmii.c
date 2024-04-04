@@ -568,8 +568,6 @@ static int mtk_usxgmii_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
 	unsigned int an_ctrl = 0, link_timer = 0, xfi_mode = 0, adapt_mode = 0;
 	bool mode_changed = false;
 
-	spin_lock(&mpcs->regmap_lock);
-
 	if (interface == PHY_INTERFACE_MODE_USXGMII) {
 		an_ctrl = FIELD_PREP(USXGMII_AN_SYNC_CNT, 0x1FF) |
 			  USXGMII_AN_ENABLE;
@@ -594,10 +592,8 @@ static int mtk_usxgmii_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
 		xfi_mode = FIELD_PREP(USXGMII_XFI_RX_MODE, USXGMII_XFI_RX_MODE_5G) |
 			   FIELD_PREP(USXGMII_XFI_TX_MODE, USXGMII_XFI_TX_MODE_5G);
 		adapt_mode = USXGMII_RATE_UPDATE_MODE;
-	} else {
-		spin_unlock(&mpcs->regmap_lock);
+	} else
 		return -EINVAL;
-	}
 
 	adapt_mode |= FIELD_PREP(USXGMII_RATE_ADAPT_MODE, USXGMII_RATE_ADAPT_MODE_X1);
 
@@ -660,8 +656,6 @@ static int mtk_usxgmii_pcs_config(struct phylink_pcs *pcs, unsigned int mode,
 	else if (interface == PHY_INTERFACE_MODE_5GBASER)
 		mtk_usxgmii_setup_phya_5gbaser(mpcs);
 
-	spin_unlock(&mpcs->regmap_lock);
-
 	return mode_changed;
 }
 
@@ -671,7 +665,6 @@ static void mtk_usxgmii_pcs_get_state(struct phylink_pcs *pcs,
 	struct mtk_usxgmii_pcs *mpcs = pcs_to_mtk_usxgmii_pcs(pcs);
 	struct mtk_eth *eth = mpcs->eth;
 	struct mtk_mac *mac = eth->mac[mtk_xgmii2mac_id(eth, mpcs->id)];
-	static unsigned long t_start;
 	u32 val = 0;
 
 	regmap_read(mpcs->regmap, RG_PCS_AN_CTRL0, &val);
@@ -734,14 +727,9 @@ static void mtk_usxgmii_pcs_get_state(struct phylink_pcs *pcs,
 		state->duplex = DUPLEX_FULL;
 	}
 
-	/* Reconfiguring USXGMII every second to ensure that PCS can
-	 * link up with the Link Partner when a module is inserted.
-	 */
-	if (state->link == 0 && time_after(jiffies, t_start + HZ)) {
-		t_start = jiffies;
+	if (state->link == 0)
 		mtk_usxgmii_pcs_config(pcs, MLO_AN_INBAND,
 				       state->interface, NULL, false);
-	}
 }
 
 void mtk_usxgmii_pcs_restart_an(struct phylink_pcs *pcs)
@@ -757,12 +745,25 @@ void mtk_usxgmii_pcs_restart_an(struct phylink_pcs *pcs)
 	regmap_write(mpcs->regmap, RG_PCS_AN_CTRL0, val);
 }
 
+void mtk_usxgmii_link_poll(struct work_struct *work)
+{
+	struct delayed_work *dwork = to_delayed_work(work);
+	struct mtk_usxgmii_pcs *mpcs = container_of(dwork, struct mtk_usxgmii_pcs, link_poll);
+
+	if (!mtk_usxgmii_link_status(mpcs)) {
+		mtk_usxgmii_pcs_config(&mpcs->pcs, mpcs->mode,
+				       mpcs->interface, NULL, false);
+
+		queue_delayed_work(system_power_efficient_wq, &mpcs->link_poll,
+				   msecs_to_jiffies(1000));
+	}
+}
+
 static void mtk_usxgmii_pcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 				    phy_interface_t interface,
 				    int speed, int duplex)
 {
 	struct mtk_usxgmii_pcs *mpcs = pcs_to_mtk_usxgmii_pcs(pcs);
-	unsigned long t_start = jiffies;
 
 	/* Reconfiguring USXGMII to ensure the quality of the RX signal
 	 * after the line side link up.
@@ -770,18 +771,8 @@ static void mtk_usxgmii_pcs_link_up(struct phylink_pcs *pcs, unsigned int mode,
 	mtk_usxgmii_pcs_config(pcs, mode,
 			       interface, NULL, false);
 
-	do {
-		msleep(1000);
-
-		if (mtk_usxgmii_link_status(mpcs))
-			return;
-
-		if (mpcs->mode == MLO_AN_PHY)
-			mtk_usxgmii_pcs_config(&mpcs->pcs, mode,
-						interface, NULL, false);
-	} while (time_before(jiffies, t_start + msecs_to_jiffies(3000)));
-
-	pr_warn("%s wait link up timeout!\n", __func__);
+	queue_delayed_work(system_power_efficient_wq, &mpcs->link_poll,
+			   msecs_to_jiffies(1000));
 }
 
 static const struct phylink_pcs_ops mtk_usxgmii_pcs_ops = {
@@ -813,7 +804,7 @@ int mtk_usxgmii_init(struct mtk_eth *eth, struct device_node *r)
 		ss->pcs[i].pcs.poll = true;
 		ss->pcs[i].interface = PHY_INTERFACE_MODE_NA;
 
-		spin_lock_init(&ss->pcs[i].regmap_lock);
+		INIT_DELAYED_WORK(&ss->pcs[i].link_poll, mtk_usxgmii_link_poll);
 
 		of_node_put(np);
 	}

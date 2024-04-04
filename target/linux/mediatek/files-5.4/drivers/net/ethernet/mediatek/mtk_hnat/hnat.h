@@ -384,11 +384,11 @@ struct hnat_ipv4_hnapt {
 	u32 resv3_1 : 9;
 	u32 eg_keep_ecn : 1;
 	u32 eg_keep_dscp : 1;
-	u32 resv3_2:13;
+	u32 resv3_2:15;
 #else
-	u32 resv3:24;
+	u32 resv3:26;
 #endif
-	u32 act_dp : 8; /* UDF */
+	u32 act_dp : 6; /* UDF */
 	u16 vlan1;
 	u16 etype;
 	u32 dmac_hi;
@@ -446,11 +446,11 @@ struct hnat_ipv4_dslite {
 		u32 resv2_1 : 1;
 		u32 eg_keep_ecn : 1;
 		u32 eg_keep_cls : 1;
-		u32 resv2_2 : 13;
+		u32 resv2_2 : 15;
 #else
-		u32 resv2 : 16;
+		u32 resv2 : 18;
 #endif
-	u32 act_dp : 8; /* UDF */
+	u32 act_dp : 6; /* UDF */
 
 	union {
 		struct hnat_info_blk2 iblk2;
@@ -515,11 +515,11 @@ struct hnat_ipv4_mape {
 		u32 resv2_1 : 1;
 		u32 eg_keep_ecn : 1;
 		u32 eg_keep_dscp : 1;
-		u32 resv2_2 : 13;
+		u32 resv2_2 : 15;
 #else
-	u32 resv2 : 16;
+	u32 resv2 : 18;
 #endif
-	u32 act_dp : 8; /* UDF */
+	u32 act_dp : 6; /* UDF */
 
 	union {
 		struct hnat_info_blk2 iblk2;
@@ -588,11 +588,11 @@ struct hnat_ipv6_3t_route {
 	u32 resv4_1 : 9;
 	u32 eg_keep_ecn : 1;
 	u32 eg_keep_cls : 1;
-	u32 resv4_2 : 13;
+	u32 resv4_2 : 15;
 #else
-	u32 resv4 : 24;
+	u32 resv4 : 26;
 #endif
-	u32 act_dp : 8; /* UDF */
+	u32 act_dp : 6; /* UDF */
 
 	union {
 		struct hnat_info_blk2 iblk2;
@@ -652,11 +652,11 @@ struct hnat_ipv6_5t_route {
 	u32 resv4_1 : 9;
 	u32 eg_keep_ecn : 1;
 	u32 eg_keep_cls : 1;
-	u32 resv4_2 : 13;
+	u32 resv4_2 : 15;
 #else
-	u32 resv4 : 24;
+	u32 resv4 : 26;
 #endif
-	u32 act_dp : 8; /* UDF */
+	u32 act_dp : 6; /* UDF */
 
 	union {
 		struct hnat_info_blk2 iblk2;
@@ -723,13 +723,13 @@ struct hnat_ipv6_6rd {
 	u32 eg_keep_tnl_qos : 1;
 	u32 resv1_2 : 4;
 	u32 per_flow_6rd_id : 1;
-	u32 resv2 : 7;
+	u32 resv2 : 9;
 #else
 	u32 resv1 : 13;
 	u32 per_flow_6rd_id : 1;
-	u32 resv2 : 7;
+	u32 resv2 : 9;
 #endif
-	u32 act_dp : 8; /* UDF */
+	u32 act_dp : 6; /* UDF */
 
 	union {
 		struct hnat_info_blk2 iblk2;
@@ -790,8 +790,8 @@ struct hnat_ipv6_hnapt {
 	u32 eg_ipv6_dir : 1;
 	u32 eg_keep_ecn : 1;
 	u32 eg_keep_cls : 1;
-	u32 resv5 : 13;
-	u32 act_dp : 8; /* UDF */
+	u32 resv5 : 15;
+	u32 act_dp : 6; /* UDF */
 
 	union {
 		struct hnat_info_blk2 iblk2;
@@ -866,11 +866,6 @@ struct foe_entry {
 #define MAX_PPE_NUM		1
 #endif
 #define CFG_PPE_NUM		(hnat_priv->ppe_num)
-
-/* If the user wants to set skb->mark to prevent hardware acceleration
- * for the packet flow.
- */
-#define HNAT_EXCEPTION_TAG	0x99
 
 struct mib_entry {
 	u32 byt_cnt_l;
@@ -1220,14 +1215,15 @@ enum FoeIpAct {
 #define NEXTHDR_IPIP 4
 #endif
 
-#define UDF_PINGPONG_IFIDX GENMASK(6, 0)
-#define UDF_HNAT_PRE_FILLED BIT(7)
+#define UDF_PINGPONG_IFIDX GENMASK(3, 0)
+#define UDF_HNAT_PRE_FILLED BIT(4)
 
-#define HQOS_FLAG(dev, skb, qid)			\
+#if defined(CONFIG_MEDIATEK_NETSYS_V3)
+#define TPORT_FLAG(dev, skb)				\
 	((IS_HQOS_UL_MODE && IS_WAN(dev)) ||		\
 	 (IS_HQOS_DL_MODE && IS_LAN_GRP(dev)) ||	\
-	 (IS_PPPQ_MODE && (IS_PPPQ_PATH(dev, skb) ||	\
-			   qid >= MAX_PPPQ_PORT_NUM)))
+	 (IS_PPPQ_MODE && IS_PPPQ_PATH(dev, skb)))
+#endif
 
 extern const struct of_device_id of_hnat_match[];
 extern struct mtk_hnat *hnat_priv;

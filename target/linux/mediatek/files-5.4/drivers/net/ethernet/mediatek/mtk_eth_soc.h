@@ -52,7 +52,7 @@
 
 #define MTK_QRX_OFFSET		0x10
 
-#define MTK_HW_LRO_DMA_SIZE	64
+#define MTK_HW_LRO_DMA_SIZE	512
 
 #define	MTK_MAX_LRO_RX_LENGTH		(4096 * 3)
 #define	MTK_MAX_LRO_IP_CNT		2
@@ -92,11 +92,7 @@
 #define MTK_FE_INT_RFIFO_UF	BIT(19)
 #define MTK_GDM1_AF		BIT(28)
 #define MTK_GDM2_AF		BIT(29)
-#if defined(CONFIG_MEDIATEK_NETSYS_V2) || defined(CONFIG_MEDIATEK_NETSYS_V3)
 #define MTK_FE_IRQ_NUM		(4)
-#else
-#define MTK_FE_IRQ_NUM		(3)
-#endif
 #define MTK_PDMA_IRQ_NUM	(4)
 #define MTK_MAX_IRQ_NUM		(MTK_FE_IRQ_NUM + MTK_PDMA_IRQ_NUM)
 
@@ -618,7 +614,6 @@
 #define RX_DMA_GET_REV(_x)	(((_x) >> 10) & 0x1f)
 #define RX_DMA_VTAG		BIT(15)
 #define RX_DMA_SDP1(_x)		((((u64)(_x)) >> 32) & 0xf)
-#define RX_DMA_GET_SDP1(_x)	((_x) & 0xf)
 
 /* QDMA descriptor rxd3 */
 #define RX_DMA_VID(_x)		((_x) & VLAN_VID_MASK)
@@ -677,8 +672,7 @@
 
 /* XMAC status registers */
 #define MTK_XGMAC_STS(x)	((x == MTK_GMAC3_ID) ? 0x1001C : 0x1000C)
-#define MTK_XGMAC_FORCE_MODE(x)	((x == MTK_GMAC2_ID) ? BIT(31) : BIT(15))
-#define MTK_XGMAC_FORCE_LINK(x)	((x == MTK_GMAC2_ID) ? BIT(27) : BIT(11))
+#define MTK_XGMAC_FORCE_LINK(x)	((x == MTK_GMAC2_ID) ? BIT(31) : BIT(15))
 #define MTK_USXGMII_PCS_LINK	BIT(8)
 #define MTK_XGMAC_RX_FC		BIT(5)
 #define MTK_XGMAC_TX_FC		BIT(4)
@@ -1146,8 +1140,6 @@ enum mtk_clks_map {
 	MTK_CLK_TOP_NETSYS_SYNC_250M_SEL,
 	MTK_CLK_TOP_NETSYS_PPEFB_250M_SEL,
 	MTK_CLK_TOP_NETSYS_WARP_SEL,
-	MTK_CLK_TOP_MACSEC_SEL,
-	MTK_CLK_TOP_NETSYS_TOPS_400M_SEL,
 	MTK_CLK_MAX
 };
 
@@ -1231,9 +1223,7 @@ enum mtk_clks_map {
 				 BIT(MTK_CLK_TOP_NETSYS_PAO_2X_SEL) | \
 				 BIT(MTK_CLK_TOP_NETSYS_SYNC_250M_SEL) | \
 				 BIT(MTK_CLK_TOP_NETSYS_PPEFB_250M_SEL) | \
-				 BIT(MTK_CLK_TOP_NETSYS_WARP_SEL) | \
-				 BIT(MTK_CLK_TOP_MACSEC_SEL) | \
-				 BIT(MTK_CLK_TOP_NETSYS_TOPS_400M_SEL))
+				 BIT(MTK_CLK_TOP_NETSYS_WARP_SEL))
 
 enum mtk_dev_state {
 	MTK_HW_INIT,
@@ -1406,7 +1396,6 @@ enum mkt_eth_capabilities {
 	MTK_HWLRO_BIT,
 	MTK_RSS_BIT,
 	MTK_SHARED_INT_BIT,
-	MTK_PDMA_INT_BIT,
 	MTK_TRGMII_MT7621_CLK_BIT,
 	MTK_QDMA_BIT,
 	MTK_NETSYS_V1_BIT,
@@ -1458,7 +1447,6 @@ enum mkt_eth_capabilities {
 #define MTK_HWLRO		BIT_ULL(MTK_HWLRO_BIT)
 #define MTK_RSS			BIT_ULL(MTK_RSS_BIT)
 #define MTK_SHARED_INT		BIT_ULL(MTK_SHARED_INT_BIT)
-#define MTK_PDMA_INT		BIT_ULL(MTK_PDMA_INT_BIT)
 #define MTK_TRGMII_MT7621_CLK	BIT_ULL(MTK_TRGMII_MT7621_CLK_BIT)
 #define MTK_QDMA		BIT_ULL(MTK_QDMA_BIT)
 #define MTK_NETSYS_V1		BIT_ULL(MTK_NETSYS_V1_BIT)
@@ -1568,17 +1556,17 @@ enum mkt_eth_capabilities {
 		      MTK_MUX_U3_GMAC2_TO_QPHY | MTK_NETSYS_V1 | \
 		      MTK_MUX_GMAC12_TO_GEPHY_SGMII | MTK_QDMA)
 
-#define MT7986_CAPS   (MTK_PDMA_INT | MTK_GMAC1_SGMII | MTK_GMAC2_SGMII | \
+#define MT7986_CAPS   (MTK_GMAC1_SGMII | MTK_GMAC2_SGMII | \
                        MTK_MUX_GMAC12_TO_GEPHY_SGMII | MTK_QDMA | \
-		       MTK_NETSYS_V2 | MTK_RSS)
+			MTK_NETSYS_V2 | MTK_RSS)
 
-#define MT7981_CAPS   (MTK_PDMA_INT | MTK_GMAC1_SGMII | MTK_GMAC2_SGMII | \
-		       MTK_GMAC2_GEPHY | MTK_MUX_GMAC12_TO_GEPHY_SGMII | MTK_QDMA | \
-		       MTK_MUX_U3_GMAC2_TO_QPHY | MTK_U3_COPHY_V2 | \
-		       MTK_NETSYS_V2 | MTK_RSS)
+#define MT7981_CAPS   (MTK_GMAC1_SGMII | MTK_GMAC2_SGMII | MTK_GMAC2_GEPHY | \
+			MTK_MUX_GMAC12_TO_GEPHY_SGMII | MTK_QDMA | \
+			MTK_MUX_U3_GMAC2_TO_QPHY | MTK_U3_COPHY_V2 | \
+			MTK_NETSYS_V2 | MTK_RSS)
 
 #define MT7988_CAPS   (MTK_GMAC1_SGMII | MTK_GMAC2_SGMII | MTK_GMAC3_SGMII | \
-		       MTK_PDMA_INT | MTK_MUX_GMAC123_TO_GEPHY_SGMII | MTK_QDMA | \
+		       MTK_MUX_GMAC123_TO_GEPHY_SGMII | MTK_QDMA | \
 		       MTK_NETSYS_V3 | MTK_RSTCTRL_PPE1 | MTK_RSTCTRL_PPE2 | \
 		       MTK_GMAC1_USXGMII | MTK_GMAC2_USXGMII | \
 		       MTK_GMAC3_USXGMII | MTK_MUX_GMAC123_TO_USXGMII | \
@@ -1707,9 +1695,7 @@ struct mtk_sgmii_pcs {
 	struct mtk_eth		*eth;
 	struct regmap		*regmap;
 	struct regmap		*regmap_pextp;
-	spinlock_t		regmap_lock;
 	phy_interface_t		interface;
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(advertising);
 	u32			flags;
 	u32			ana_rgc3;
 	u8			id;
@@ -1740,7 +1726,7 @@ struct mtk_usxgmii_pcs {
 	struct mtk_eth		*eth;
 	struct regmap		*regmap;
 	struct regmap		*regmap_pextp;
-	spinlock_t		regmap_lock;
+	struct delayed_work	link_poll;
 	phy_interface_t		interface;
 	unsigned int		mode;
 	u8			id;

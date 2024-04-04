@@ -98,13 +98,7 @@ else
   LINUX_KARCH := $(ARCH)
 endif
 
-KERNEL_VARS = \
-	LD_PRELOAD="$(STAGING_DIR_HOST)/lib/ldlogger.so" \
-	CC_LOGGER_GCC_LIKE="gcc:g++:clang:clang++:cc:c++" \
-	CC_LOGGER_FILE="$(LINUX_DIR)/compile_commands.json" \
-	CC_LOGGER_KEEP_LINK=true
-
-KERNEL_MAKE = $(KERNEL_VARS) $(MAKE) $(KERNEL_MAKEOPTS)
+KERNEL_MAKE = $(MAKE) $(KERNEL_MAKEOPTS)
 
 KERNEL_MAKE_FLAGS = \
 	KCFLAGS="$(call iremap,$(BUILD_DIR),$(notdir $(BUILD_DIR))) $(filter-out -fno-plt,$(call qstrip,$(CONFIG_EXTRA_OPTIMIZATION))) $(call qstrip,$(CONFIG_KERNEL_CFLAGS))" \
